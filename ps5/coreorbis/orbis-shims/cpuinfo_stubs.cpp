@@ -1,28 +1,37 @@
 // Fixed Zen2 topology for Orbis (matches poc2: ncpu=16, 64B lines).
 // Single cluster: thread-placement code still works, just never migrates.
+// PS4 port (AI-assisted): the PS4's two Jaguar modules, 8 cores without SMT (the app runs on 7 of them).
 #include "cpuinfo.h"
+
+#ifdef ORBIS_PS4
+static constexpr uint32_t kThreadsPerCore = 1;
+#else
+static constexpr uint32_t kThreadsPerCore = 2;
+#endif
+static constexpr uint32_t kCores = 8;
+static constexpr uint32_t kProcessors = kCores * kThreadsPerCore;
 
 static const struct cpuinfo_cache s_l1i = {64};
 static const struct cpuinfo_cache s_l1d = {64};
-static const struct cpuinfo_cluster s_cluster = {0, 16, 0, 8, 0};
-static struct cpuinfo_processor s_procs[16];
-static struct cpuinfo_core s_cores[8];
+static const struct cpuinfo_cluster s_cluster = {0, kProcessors, 0, kCores, 0};
+static struct cpuinfo_processor s_procs[kProcessors];
+static struct cpuinfo_core s_cores[kCores];
 static const struct cpuinfo_uarch_info s_uarch = {cpuinfo_uarch_zen2};
 
 extern "C" bool cpuinfo_initialize(void)
 {
-  for (int i = 0; i < 16; i++)
+  for (uint32_t i = 0; i < kProcessors; i++)
   {
-    s_procs[i].smt_id = (uint32_t)(i & 1);
+    s_procs[i].smt_id = i % kThreadsPerCore;
     s_procs[i].cluster = &s_cluster;
     s_procs[i].cache.l1i = &s_l1i;
     s_procs[i].cache.l1d = &s_l1d;
   }
-  for (int i = 0; i < 8; i++)
+  for (uint32_t i = 0; i < kCores; i++)
   {
-    s_cores[i].processor_start = (uint32_t)(i * 2);
-    s_cores[i].processor_count = 2;
-    s_cores[i].core_id = (uint32_t)i;
+    s_cores[i].processor_start = i * kThreadsPerCore;
+    s_cores[i].processor_count = kThreadsPerCore;
+    s_cores[i].core_id = i;
     s_cores[i].cluster = &s_cluster;
     s_cores[i].vendor = cpuinfo_vendor_amd;
   }
@@ -31,14 +40,14 @@ extern "C" bool cpuinfo_initialize(void)
 
 extern "C" const struct cpuinfo_processor* cpuinfo_get_processor(uint32_t index)
 {
-  if (index >= 16)
+  if (index >= kProcessors)
     return 0;
   return &s_procs[index];
 }
 
 extern "C" uint32_t cpuinfo_get_processors_count(void)
 {
-  return 16;
+  return kProcessors;
 }
 
 extern "C" uint32_t cpuinfo_get_clusters_count(void)
@@ -55,12 +64,12 @@ extern "C" const struct cpuinfo_cluster* cpuinfo_get_cluster(uint32_t index)
 
 extern "C" uint32_t cpuinfo_get_cores_count(void)
 {
-  return 8;
+  return kCores;
 }
 
 extern "C" const struct cpuinfo_core* cpuinfo_get_core(uint32_t index)
 {
-  if (index >= 8)
+  if (index >= kCores)
     return 0;
   return &s_cores[index];
 }

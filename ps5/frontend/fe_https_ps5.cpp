@@ -119,6 +119,7 @@ namespace fe
 		// The kernel's arc4random (kern.arandom), up to 256 bytes a call.
 		bool SysctlRandom(unsigned char* p, size_t len)
 		{
+#ifdef KERN_ARND
 			while (len > 0)
 			{
 				int mib[2] = {CTL_KERN, KERN_ARND};
@@ -129,6 +130,10 @@ namespace fe
 				len -= got;
 			}
 			return true;
+#else
+			(void)p, (void)len; // PS4 port (AI-assisted): no KERN_ARND in OpenOrbis' headers
+			return false;
+#endif
 		}
 
 		bool UrandomRandom(unsigned char* p, size_t len)

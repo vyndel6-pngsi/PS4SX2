@@ -43,6 +43,9 @@
 #include <sys/stat.h>
 #include <sys/param.h>
 #include <sys/mount.h> // statfs: the texture packs' free space
+#ifdef ORBIS_PS4
+#include <sys/statfs.h> // PS4 port (AI-assisted): OpenOrbis' struct statfs (unused there, see below)
+#endif
 #include <sys/time.h>
 #include <thread>
 #include <time.h>
@@ -579,6 +582,10 @@ uint64_t TexturePackFreeBytes(const std::string& dir)
 	}();
 	if (!fstatfs_fn)
 		return UINT64_MAX;
+#ifdef ORBIS_PS4
+	// PS4 port (AI-assisted): OpenOrbis' struct statfs is Linux's layout, not the FreeBSD kernel's: no room check.
+	return UINT64_MAX;
+#endif
 	const int fd = open(dir.c_str(), O_RDONLY);
 	if (fd < 0)
 		return UINT64_MAX;
@@ -1742,6 +1749,7 @@ std::string orbis_frontend_run(const OrbisFrontendPaths& paths, const char* buil
 	acfg.options.gs_ini = paths.gs_ini;
 	acfg.options.patches_dir = paths.patches_dir;
 	acfg.options.memcards_dir = paths.memcards_dir;
+	acfg.options.bios_dir = paths.bios_dir; // PS4 port (AI-assisted): the sheet's BIOS row
 	acfg.options.presets.assign(reinterpret_cast<const char*>(fe_presets), static_cast<size_t>(fe_presets_end - fe_presets));
 	{
 		const std::string log_path = paths.settings_log;

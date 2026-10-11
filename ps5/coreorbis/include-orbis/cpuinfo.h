@@ -89,9 +89,16 @@ static inline bool cpuinfo_has_x86_avx(void)
 {
   return true;
 }
+// PS4 port (AI-assisted): the PS4's (and PS4 Pro's) AMD Jaguar has SSE4.2, AVX, BMI1 and F16C, but no AVX2, FMA3 or
+// BMI2: PCSX2 must not pick AVX2 code (MultiISA, the GS's code generators) there.
+#ifdef ORBIS_PS4
+#define ORBIS_CPU_HAS_AVX2 false
+#else
+#define ORBIS_CPU_HAS_AVX2 true
+#endif
 static inline bool cpuinfo_has_x86_avx2(void)
 {
-  return true;
+  return ORBIS_CPU_HAS_AVX2;
 }
 static inline bool cpuinfo_has_x86_avx512f(void)
 {
@@ -99,7 +106,7 @@ static inline bool cpuinfo_has_x86_avx512f(void)
 }
 static inline bool cpuinfo_has_x86_fma3(void)
 {
-  return true;
+  return ORBIS_CPU_HAS_AVX2; // Zen 2 has FMA3, Jaguar doesn't
 }
 static inline bool cpuinfo_has_x86_bmi(void)
 {
@@ -107,6 +114,6 @@ static inline bool cpuinfo_has_x86_bmi(void)
 }
 static inline bool cpuinfo_has_x86_bmi2(void)
 {
-  return true;
+  return ORBIS_CPU_HAS_AVX2; // Zen 2 has BMI2, Jaguar doesn't
 }
 #endif

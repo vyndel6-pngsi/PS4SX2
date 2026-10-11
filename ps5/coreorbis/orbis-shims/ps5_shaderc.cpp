@@ -198,8 +198,20 @@ shaderc_compilation_result_t shaderc_compile_into_spv(const shaderc_compiler_t c
 		result->errors = 1;
 		return result;
 	}
+#ifdef ORBIS_PS4
+	// PS4 port (AI-assisted): glslang 15 has no glslang_shader_set_entry_point; PCSX2's shaders are all "main".
+	if (entry_point_name && std::strcmp(entry_point_name, "main") != 0)
+	{
+		result->status = shaderc_compilation_status_invalid_assembly;
+		result->messages = "ps5_shaderc: entry points other than main need glslang 16\n";
+		result->errors = 1;
+		glslang_shader_delete(shader);
+		return result;
+	}
+#else
 	if (entry_point_name && std::strcmp(entry_point_name, "main") != 0)
 		glslang_shader_set_entry_point(shader, entry_point_name);
+#endif
 
 	if (!glslang_shader_preprocess(shader, &input) || !glslang_shader_parse(shader, &input))
 	{

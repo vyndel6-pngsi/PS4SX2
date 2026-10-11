@@ -22,7 +22,8 @@
 #include <sys/ioctl.h>
 #include <string.h>
 
-#if defined(__FreeBSD__) || (__APPLE__)
+// PS4 port (AI-assisted): OpenOrbis has no net/if_dl.h or net/route.h; the FreeBSD paths below are left out.
+#if (defined(__FreeBSD__) || (__APPLE__)) && !defined(ORBIS_PS4)
 #include <sys/types.h>
 #include <net/if_dl.h>
 #include <sys/param.h>
@@ -216,7 +217,7 @@ bool AdapterUtils::GetAdapter(const std::string& name, Adapter* adapter, Adapter
 
 	return false;
 }
-#ifdef __PROSPERO__
+#if defined(__PROSPERO__) || defined(ORBIS_PS4) // PS4 port (AI-assisted): the same console behaviour
 // PS5 port: the address the console's own traffic leaves from. A UDP connect() sends nothing; it
 // only picks the route, and getsockname() then names the local address on it.
 static std::optional<IP_Address> ProsperoOutboundIP()
@@ -250,7 +251,7 @@ bool AdapterUtils::GetAdapterAuto(Adapter* adapter, AdapterBuffer* buffer)
 	if (pAdapter == nullptr)
 		return false;
 
-#ifdef __PROSPERO__
+#if defined(__PROSPERO__) || defined(ORBIS_PS4) // PS4 port (AI-assisted): the same console behaviour
 	// PS5 port: the console has no working if_nameindex(), so GetGateways() finds no gateway for any
 	// adapter and the search below always failed ("Auto Selection Failed"). Take the adapter that holds
 	// the console's outbound address instead, or else the first one that is up with an IPv4 address.
@@ -335,7 +336,7 @@ std::optional<MAC_Address> AdapterUtils::GetAdapterMAC(const Adapter* adapter)
 std::optional<MAC_Address> AdapterUtils::GetAdapterMAC(const Adapter* adapter)
 {
 	MAC_Address macAddr{};
-#if defined(AF_LINK)
+#if defined(AF_LINK) && !defined(ORBIS_PS4)
 	ifaddrs* adapterInfo;
 	const int error = getifaddrs(&adapterInfo);
 	if (error)
@@ -499,7 +500,7 @@ std::vector<IP_Address> AdapterUtils::GetGateways(const Adapter* adapter)
 	}
 	return collection;
 }
-#elif defined(__FreeBSD__) || defined(__APPLE__)
+#elif (defined(__FreeBSD__) || defined(__APPLE__)) && !defined(ORBIS_PS4)
 std::vector<IP_Address> AdapterUtils::GetGateways(const Adapter* adapter)
 {
 	if (adapter == nullptr)
@@ -581,7 +582,7 @@ std::vector<IP_Address> AdapterUtils::GetGateways(const Adapter* adapter)
 	return collection;
 }
 #else
-std::vector<IP_Address> AdapterUtils::GetGateways(Adapter* adapter)
+std::vector<IP_Address> AdapterUtils::GetGateways(const Adapter* adapter) // PS4 port (AI-assisted): const, as declared
 {
 	Console.Error("DEV9: Unsupported OS, can't find Gateway");
 	return {};
@@ -611,7 +612,7 @@ std::vector<IP_Address> AdapterUtils::GetDNS(const Adapter* adapter)
 
 	return collection;
 }
-#elif defined(__PROSPERO__)
+#elif defined(__PROSPERO__) || defined(ORBIS_PS4)
 // PS5 port (2026-10-05, AI-assisted): the console has no /etc/resolv.conf, so the POSIX version below found no DNS server
 // ("Failed to open /etc/resolv.conf") and PCSX2's DHCP gave the PS2 none: a game left on automatic DNS couldn't look up
 // a name. Ask the PS5 for the DNS servers it uses itself (libSceNetCtl). The info codes are the PS4 SDK's (the console's

@@ -140,6 +140,25 @@ static bool orbis_boot_log_open(bool rotate)
   if (!t)
     return false; // stdout and stderr are as they were: no freopen() that would close them
   fclose(t);
+#ifdef ORBIS_PS4
+  {
+    // PS4 port (AI-assisted): OpenOrbis' freopen() (musl's) moves the new file onto the stream with dup3(), which the
+    // PS4's kernel doesn't have: it closed stdout instead, and boot.log stayed empty. One file description, put under
+    // both streams with the kernel's dup2(), does what the two freopen()s and the dup2() below do.
+    const int fd = open(boot_log.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0666);
+    if (fd < 0)
+      return false;
+    fflush(stdout);
+    fflush(stderr);
+    dup2(fd, fileno(stdout));
+    dup2(fd, fileno(stderr));
+    if (fd != fileno(stdout) && fd != fileno(stderr))
+      close(fd);
+    clearerr(stdout);
+    clearerr(stderr);
+    return true;
+  }
+#endif
   freopen(boot_log.c_str(), "a", stdout);
   freopen(boot_log.c_str(), "a", stderr);
   // Orbis: the two freopen()s give independent file offsets, so stdout and
@@ -226,6 +245,15 @@ static void orbis_boot_log_hold()
 
 // Called after the jailbreak, and again at the later steps of the start: when boot.log can be created now, the held
 // lines go to the top of it and stdout and stderr are the file's, as they are at a normal start.
+// PS4 port (AI-assisted): boot.log a line at a time while the port is brought up: the system ends the app without a
+// signal on a GPU fault or when memory runs out, and a fully buffered stdout then loses the log's last second (or all
+// of it). PS5SX2 buffers 1 MB for speed (the per-line cost: see main()).
+#ifdef ORBIS_PS4
+#define ORBIS_STDOUT_BUFFERING _IOLBF
+#else
+#define ORBIS_STDOUT_BUFFERING _IOFBF
+#endif
+
 static void orbis_boot_log_release(const char* when)
 {
   if (!g_boot_held.load(std::memory_order_acquire))
@@ -239,7 +267,7 @@ static void orbis_boot_log_release(const char* when)
   if (!orbis_boot_log_open(true))
     return; // the folder is there but boot.log can't be made: keep holding
   g_boot_held.store(false, std::memory_order_release);
-  setvbuf(stdout, nullptr, _IOFBF, 1 << 20);
+  setvbuf(stdout, nullptr, ORBIS_STDOUT_BUFFERING, 1 << 20);
   // The pipe's write ends are gone now (freopen() closed them): the pump reads what is left and stops.
   for (int i = 0; i < 100; i++)
   {
@@ -1008,6 +1036,18 @@ static constexpr GSRendererType ORBIS_GPU_RENDERER = GSRendererType::VK;
 #else
 static constexpr GSRendererType ORBIS_GPU_RENDERER = GSRendererType::OGL;
 #endif
+// PS4 port (AI-assisted): paraLLEl-GS (the GS in Vulkan compute, GSRendererPGS.cpp) instead of GSDeviceVK, for the
+// games whose GS thread is CPU-bound: PS5SX2/Renderer = paraLLEl in gs.ini or a game's settings file, PCSX2's
+// EmuCore/GS/Renderer = 18, or the flag file pgs. Read at game start. Needs proper testing on the console.
+static bool g_orbis_pgs = false;
+static GSRendererType orbis_gpu_renderer()
+{
+#ifdef HAVE_PARALLEL_GS
+  if (g_orbis_pgs)
+    return GSRendererType::ParallelGS;
+#endif
+  return ORBIS_GPU_RENDERER;
+}
 // Orbis: true = PCSX2 OpenGL renderer (GPU) + no CPU overlay; false = SW renderer + overlay.
 // Orbis: SW renderer + CPU overlay is the known-good demo path (correct output,
 // slow). The OpenGL path (GPU) needs the ps5-opengl driver's per-draw cost
@@ -2049,6 +2089,10 @@ static OrbisFrontendPaths orbis_frontend_paths(bool allow_download)
   fe.usb_list = OrbisDir("cache") + "/usb-games.txt";
   fe.serial_cache = OrbisDir("cache") + "/chd-serials.txt"; // vk-285-108
   fe.gamedb_file = OrbisDir("resources") + "/GameIndex.yaml"; // vk-285-113: the games' names, for the shelf and the page
+#ifdef ORBIS_PS4
+  if (!FileSystem::FileExists(fe.gamedb_file.c_str()))
+    fe.gamedb_file = "/app0/resources/GameIndex.yaml"; // PS4 port: the package's resources (see EmuFolders::Resources)
+#endif
   fe.memcards_dir = OrbisDir("memcards"); // vk-285-113: the settings page's memory card list and creator
   fe.test_build = g_orbis_test_build;
   fe.build_label = orbis_build_label();
@@ -2501,6 +2545,19 @@ static void orbis_vk_environment()
   {
     setenv("MESA_SHADER_CACHE_DIR", (OrbisDir("cache") + "/radv-shader-cache").c_str(), 0);
     if (hw && orbis_flag("vk_recordthread")) setenv("RADV_THREADED_RECORDING", "1", 0);
+#ifdef ORBIS_PS4
+    // PS4 port (AI-assisted): the flag file radvhang finds a GPU hang. RADV waits for each submission (RADV_DEBUG=hang), so
+    // the one that hangs is still among the GNM winsys' last 16 and its hang report (/data/Crema/gpu/gpu-hang.txt) decodes
+    // it; RADV's own dump (shaders included) goes under $HOME. RADV_PS4_TRACE: the winsys' flight recorder
+    // (/data/Crema/gpu/flight). Slow: for finding the hang only. Needs proper testing.
+    if (orbis_flag("radvhang"))
+    {
+      setenv("RADV_DEBUG", "hang", 0);
+      setenv("RADV_PS4_TRACE", "1", 0);
+      setenv("HOME", OrbisDir("cache").c_str(), 0);
+      printf("[boot] radvhang: RADV_DEBUG=hang RADV_PS4_TRACE=1 HOME=%s\n", getenv("HOME"));
+    }
+#endif
     const char* const cache = getenv("MESA_SHADER_CACHE_DIR");
     const char* const threaded = getenv("RADV_THREADED_RECORDING");
     printf("[boot] RADV environment (hardware renderer %s): MESA_SHADER_CACHE_DIR=%s RADV_THREADED_RECORDING=%s\n", hw ? "yes" : "no",
@@ -2596,8 +2653,50 @@ static void orbis_vk_environment()
 #endif
 
 
+#ifdef ORBIS_PS4
+extern "C" int sceKernelIsNeoMode(void); // PS4 port: 1 on a PS4 Pro running the app in Pro mode
+// PS4 port (AI-assisted): the start's steps in /data/Crema/boot-trace.log (CEMUPS4's runtime, one write per line), for a
+// start the system ends before boot.log says where. Needs proper testing; remove once the port starts reliably.
+extern "C" void ps4_boot_trace(const char* stage);
+#define ORBIS_PS4_STEP(what) ps4_boot_trace("[pcsx2] " what)
+#else
+#define ORBIS_PS4_STEP(what) ((void)0)
+#endif
+
+#ifdef ORBIS_PS4
+extern "C" void orbis_ps4_load_system_modules(); // ps4/ps4_compat.cpp
+extern "C" int orbis_ps4_enable_dmem_aliasing(); // ps4/ps4_compat.cpp
+extern "C" int g_orbis_ps4_dmem_aliasing;        // ps4/ps4_compat.cpp: 1 when that worked
+#endif
+
+// The PS2's USB keyboard and mouse (orbis-shims/ProsperoKbdMouse.cpp), off with the flag file nousbkbm. PS4 port
+// (AI-assisted): always off for now: libSceKeyboard didn't load on the test console (0x805a1000), and a call into a
+// module that isn't loaded ends the app. Needs proper testing with a USB keyboard and mouse.
+// MTVU (VU1 on its own thread): off by default on the PS5, whose cores keep up without it. PS4 port (AI-assisted): on,
+// so VU1 leaves the EE's Jaguar core (GTA San Andreas ran its EE at about 35% speed in v00.08 with both on one core).
+// gs.ini, a game's file and the GameDB's MTVU entries (PS5SX2's list included) still decide. Needs proper testing.
+#ifdef ORBIS_PS4
+static constexpr bool kOrbisMtvuDefault = true;
+#else
+static constexpr bool kOrbisMtvuDefault = false;
+#endif
+
+static bool orbis_no_usb_kbm()
+{
+#ifdef ORBIS_PS4
+  return true;
+#else
+  return orbis_flag("nousbkbm");
+#endif
+}
+
 int main()
 {
+#ifdef ORBIS_PS4
+  // PS4 port (AI-assisted): before any call into a system library (the PS5 loads a title's modules itself).
+  orbis_ps4_load_system_modules();
+  orbis_ps4_enable_dmem_aliasing(); // before the guest RAM's views (fastmem) are mapped
+#endif
   // Bigapp: no elfldr socket. Log to file (read back over FTP) + notify.
   // vk-285-33: in logs/ when that folder exists (OrbisPaths.h).
   // vk-285-113: a broken pipe (a network peer that went away) is an error return, not the end of the app.
@@ -2619,10 +2718,11 @@ int main()
   // tens of percent of wall time). Back to _IOFBF 1MB: the 1s ticker thread
   // below printf+fflushes every second (periodic flush), and the crash
   // handler flushes on death, so worst case we lose ~1s of hot-path lines.
-  setvbuf(stdout, nullptr, _IOFBF, 1 << 20);
+  setvbuf(stdout, nullptr, ORBIS_STDOUT_BUFFERING, 1 << 20);
   fprintf(stderr, "[boot] stderr-ok\n");
   printf("[boot] main=%p\n", (void*)&main);
   printf("[boot] build=" ORBIS_BUILD_TAG "\n");
+#ifndef ORBIS_PS4 // PS4 port (AI-assisted): 256-bit integer adds are AVX2, which the PS4's Jaguar doesn't have
   {
     // vk-285-91: what VZEROUPPER costs on this CPU. The GS thread's profiles (vk-285-89/90) had 5-7% of
     // their samples on the instruction right after one, so the eboot is now built with -mno-vzeroupper
@@ -2649,17 +2749,20 @@ int main()
     const double with = loop(true), without = loop(false);
     printf("[vzubench] ticks per iteration: 256-bit add + vzeroupper %.2f, 256-bit add alone %.2f (TSC)\n", with, without);
   }
+#endif
   if (g_orbis_test_build > 0)
     printf("[boot] testing build: %s\n", orbis_build_label().c_str()); // test build 1 (vk-285-55)
 #ifdef ORBIS_VULKAN
   orbis_event_log_init(OrbisLogPath("settings.log")); // vk-285-51
 #endif
   orbis_eventf("app start: %s (pid %d)", orbis_build_label().c_str(), (int)getpid());
+  ORBIS_PS4_STEP("app start");
   {
     // vk-285-51: the crash printer (orbis-shims/ProsperoCrash.cpp) from the start, so the shelf and
     // the settings page's thread are covered too; it was installed only just before PCSX2 started.
     orbis_install_signal_handlers(); // vk-285-113: more signals, and the ones that end the app
   }
+  ORBIS_PS4_STEP("signal handlers installed");
 #if defined(ORBIS_DRIVER_REV) && defined(ORBIS_PCSX2_REV)
   // vk-285-35: the exact sources (link-vk.sh; a trailing + marks uncommitted changes).
   printf("[boot] sources: driver %s, pcsx2 %s\n", ORBIS_DRIVER_REV, ORBIS_PCSX2_REV);
@@ -2689,12 +2792,14 @@ int main()
   // pthread stacks remain outside the emulation maps.
   void* guard = mmap(nullptr, 0x8000000, PROT_READ | PROT_WRITE, 0 /*ANON*/, -1, 0);
   printf("[boot] stack guard=%p (errno=%d)\n", guard, (guard == (void*)-1) ? errno : 0);
+  ORBIS_PS4_STEP("stack guard mapped");
 #ifdef ORBIS_VULKAN
   {
     extern void orbis_vk_window_survey(const char* when);
     orbis_vk_window_survey("at start");
   }
 #endif
+  ORBIS_PS4_STEP("GPU window survey done");
   fflush(stdout);
 
   // On-screen debug overlay (VideoOut canvas, separate thread).
@@ -2702,6 +2807,7 @@ int main()
   // vk-285-110: the shelf's and the notifications' text in the PS5's language (fe_i18n.cpp), with testers'
   // fixes from lang/<code>.txt when /data is readable here (again after the jailbreak).
   orbis_frontend_set_language(OrbisDir("lang"));
+  ORBIS_PS4_STEP("language set, notifying");
   sys_notify(fe::Tr(g_orbis_test_build > 0 ? fe::Str::NotifyStartingTest : fe::Str::NotifyStarting)); // vk-285-50: the new name
   // vk-285-44: only the cover downloads run before the HEN jailbreak. HTTPS from the frontend
   // failed after it (vk-285-41/42: the handshake to raw.githubusercontent.com hung, or ended in
@@ -2714,10 +2820,13 @@ int main()
   bool frontend_ran = false;
 #ifdef ORBIS_VULKAN
   orbis_log_flag_access("before the jailbreak");
+  ORBIS_PS4_STEP("flags read");
   orbis_scan_usb("before the jailbreak"); // test build 1: whether the sandbox shows USB drives yet
+  ORBIS_PS4_STEP("USB scan done");
   if (!orbis_flag("nofrontend") && !orbis_flag("nomenu") && !orbis_flag("nocoverdl"))
     orbis_frontend_prefetch_covers(orbis_frontend_paths(true), 30.0, sys_notify);
 #endif
+  ORBIS_PS4_STEP("cover prefetch done");
 
   // Primary: etaHEN/OnionHEN download0 file-broker jailbreak (needs PPSA99203
   // in the HEN app_jailbreak allowlist). Falls back to the legacy CMD ports.
@@ -2725,16 +2834,19 @@ int main()
   extern bool orbis_probe_jit();
   extern void orbis_log_hen_config();
   orbis_log_hen_config();
+  ORBIS_PS4_STEP("HEN config logged");
   if (orbis_hen_jailbreak())
     g_jailbreak_ok = 1;
   else
     orbis_try_jailbreak();
+  ORBIS_PS4_STEP("jailbreak step done");
 #ifdef ORBIS_VULKAN
   orbis_log_flag_access("after the jailbreak");
 #endif
   orbis_boot_log_release("after the jailbreak"); // vk-285-113: boot.log's first lines, when /data wasn't there yet
 #ifdef ORBIS_VULKAN
   orbis_ensure_data_layout(); // vk-285-115: the release's switch files on a console set up by hand
+  ORBIS_PS4_STEP("data layout done");
 #endif
   orbis_frontend_set_language(OrbisDir("lang")); // vk-285-110: lang/<code>.txt may only be readable now
   // Test build 1 (vk-285-55): what the console is, in boot.log and the settings log.
@@ -2743,6 +2855,7 @@ int main()
   // geteuid() may keep reporting 1 even with working creds; the JIT page
   // probe is the ground truth for privilege on this firmware.
   const bool jit_probe_ok = orbis_probe_jit();
+  ORBIS_PS4_STEP("JIT probe done");
   if (jit_probe_ok)
     g_jailbreak_ok = 1;
   // vk-285-62: the memory probe (orbis-shims/orbis_memprobe.cpp): what direct memory can hold
@@ -2841,6 +2954,35 @@ int main()
       fflush(stdout);
     }
   }
+#ifdef ORBIS_PS4
+  {
+    // PS4 port (AI-assisted): the BIOS files built into the package (/app0/bios, ps4/build-ps4.sh's PCSX2_PS4_BIOS_DIR) go
+    // into /data/PCSX2/bios, where PCSX2 can write their .NVM and .MEC next to them. A file already there is left as it is
+    // (the console's own NVM settings stay). The shelf's BIOS row then picks among them. Needs proper testing on the console.
+    const std::string from = "/app0/bios", to = "/data/PCSX2/bios";
+    FileSystem::FindResultsArray files;
+    if (FileSystem::FindFiles(from.c_str(), "*", FILESYSTEM_FIND_FILES, &files) && !files.empty())
+    {
+      mkdir(to.c_str(), 0777);
+      int copied = 0, kept = 0;
+      for (const FILESYSTEM_FIND_DATA& f : files)
+      {
+        const std::string name = f.FileName.substr(f.FileName.rfind('/') + 1);
+        const std::string dest = to + "/" + name;
+        if (FileSystem::FileExists(dest.c_str()))
+          kept++;
+        else if (FileSystem::CopyFilePath(f.FileName.c_str(), dest.c_str(), false))
+          copied++;
+        else
+          printf("[boot] BIOS from the package: copying %s failed\n", name.c_str());
+      }
+      printf("[boot] BIOS from the package: %d files copied to %s, %d already there\n", copied, to.c_str(), kept);
+      fflush(stdout);
+      if (EmuFolders::Bios == "/data/PCSX2")
+        EmuFolders::Bios = to;
+    }
+  }
+#endif
   EmuFolders::Settings = "/data/PCSX2";
   EmuFolders::Logs = OrbisDir("logs");
   EmuFolders::MemoryCards = OrbisDir("memcards");
@@ -2855,6 +2997,12 @@ int main()
   EmuFolders::InputProfiles = "/data/PCSX2";
   // Orbis: GL renderer loads shaders from <Resources>/shaders/opengl/*.glsl.
   EmuFolders::Resources = OrbisDir("resources"); // vk-285-33: GameIndex.yaml, shaders/
+#ifdef ORBIS_PS4
+  // PS4 port (AI-assisted): the resources ship in the package (ps4/build-ps4.sh); a resources folder in /data/PCSX2
+  // with a GameIndex.yaml in it is used instead.
+  if (!FileSystem::FileExists((EmuFolders::Resources + "/GameIndex.yaml").c_str()))
+    EmuFolders::Resources = "/app0/resources";
+#endif
   printf("[boot] folders: bios %s | memcards %s | savestates %s | patches %s | resources %s | cache %s | logs %s | flags %s\n",
     EmuFolders::Bios.c_str(), EmuFolders::MemoryCards.c_str(), EmuFolders::Savestates.c_str(), EmuFolders::Patches.c_str(),
     EmuFolders::Resources.c_str(), EmuFolders::Cache.c_str(), EmuFolders::Logs.c_str(), OrbisDir("flags").c_str());
@@ -2993,6 +3141,14 @@ int main()
       g_sw_renderer = true;
       sw_by_setting = true;
     }
+#ifdef HAVE_PARALLEL_GS
+    else if (r == "paraLLEl" || r == "parallel" || r == "pgs" || r == "paraLLEl-GS" ||
+             (r.empty() && (pcsx2_renderer == static_cast<int>(GSRendererType::ParallelGS) || orbis_flag("pgs"))))
+    {
+      g_orbis_pgs = true;
+      g_sw_renderer = false;
+    }
+#endif
     else if ((r == "Hardware" || r == "hardware" || r == "hw") && g_sw_renderer)
     {
       g_sw_renderer = false;
@@ -3002,7 +3158,7 @@ int main()
     }
     if (!r.empty() || pcsx2_renderer >= 0)
     {
-      printf("[boot] renderer: %s (PS5SX2/Renderer=%s, EmuCore/GS/Renderer=%d)\n", g_sw_renderer ? "software" : "hardware",
+      printf("[boot] renderer: %s (PS5SX2/Renderer=%s, EmuCore/GS/Renderer=%d)\n", g_sw_renderer ? "software" : g_orbis_pgs ? "paraLLEl-GS" : "hardware",
         r.empty() ? "(unset)" : r.c_str(), pcsx2_renderer);
       fflush(stdout);
     }
@@ -3014,7 +3170,7 @@ int main()
   g_vu_interp = orbis_flag("vuinterp");
   g_ee_interp = orbis_flag("eeinterp");
   g_iop_interp = orbis_flag("iopinterp");
-  EmuConfig.GS.Renderer = (g_use_gl_renderer && !g_sw_renderer) ? ORBIS_GPU_RENDERER : GSRendererType::SW;
+  EmuConfig.GS.Renderer = (g_use_gl_renderer && !g_sw_renderer) ? orbis_gpu_renderer() : GSRendererType::SW;
   EmuConfig.GS.SWExtraThreads = g_sw_renderer ? 4 : 2;
 
   {
@@ -3045,27 +3201,37 @@ int main()
     // mapped twice, and the area was flexible memory (or nothing). With the guest's data in direct
     // memory the area is a reservation filled with direct mappings (common/Linux/LnxHostSys.cpp);
     // on with the flag file fastmem.
+#ifdef ORBIS_PS4
+    {
+      // PS4 port (AI-assisted): fastmem only when the kernel let the process alias direct memory (ps4_compat.cpp).
+      const bool fastmem = orbis_flag("fastmem") && g_orbis_ps4_dmem_aliasing;
+      s_base_si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableFastmem", fastmem);
+      printf("[boot] fastmem %s\n", fastmem ? "on (flag fastmem, direct memory aliasing on)"
+                                    : g_orbis_ps4_dmem_aliasing ? "off" : "off (no direct memory aliasing)");
+    }
+#else
     s_base_si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableFastmem", orbis_flag("fastmem"));
     printf("[boot] fastmem %s\n", orbis_flag("fastmem") ? "on (flag fastmem)" : "off");
+#endif
     s_base_si.SetBoolValue("EmuCore/CPU/Recompiler", "EnableEECache", false);
     s_base_si.SetBoolValue("EmuCore/Speedhacks", "WaitLoop", true);
     s_base_si.SetBoolValue("EmuCore/Speedhacks", "IntcStat", true);
     s_base_si.SetBoolValue("EmuCore/Speedhacks", "vu1Instant", !g_no_speedhacks);
     s_base_si.SetBoolValue("EmuCore/Speedhacks", "vuFlagHack", !g_no_speedhacks);
-    s_base_si.SetBoolValue("EmuCore/Speedhacks", "vuThread", false);
-  s_base_si.SetIntValue("EmuCore/GS", "Renderer", (s32)((g_use_gl_renderer && !g_sw_renderer) ? ORBIS_GPU_RENDERER : GSRendererType::SW));
+    s_base_si.SetBoolValue("EmuCore/Speedhacks", "vuThread", kOrbisMtvuDefault);
+  s_base_si.SetIntValue("EmuCore/GS", "Renderer", (s32)((g_use_gl_renderer && !g_sw_renderer) ? orbis_gpu_renderer() : GSRendererType::SW));
   s_base_si.SetIntValue("EmuCore/GS", "extrathreads", g_sw_renderer ? 4 : 2); // eerec-285: PCSX2's key; "SWExtraThreads" never applied
   s_base_si.SetStringValue("EmuCore", "Filename", s_game_path.c_str()); // vk-285-30: the selector's pick
   // vk-285-72: a USB keyboard on the PS2's USB port 1 and a USB mouse on port 2, fed from the PS5's own
   // (orbis-shims/ProsperoKbdMouse.cpp), for the games that take them (Half-Life, Unreal Tournament, the
   // online games' chat). The flag file nousbkbm leaves both ports empty; a game's settings file can set
   // USB1/Type or USB2/Type itself (None to take one off).
-  if (!orbis_flag("nousbkbm"))
+  if (!orbis_no_usb_kbm())
   {
     s_base_si.SetStringValue("USB1", "Type", "hidkbd");
     s_base_si.SetStringValue("USB2", "Type", "hidmouse");
   }
-  printf("[boot] USB keyboard and mouse %s\n", orbis_flag("nousbkbm") ? "off (flag nousbkbm)" : "on ports 1 and 2");
+  printf("[boot] USB keyboard and mouse %s\n", orbis_no_usb_kbm() ? "off (flag nousbkbm)" : "on ports 1 and 2");
   // 2026-10-05 (AI-assisted; swordpdf: the network adapter on for every game, after a tester went online in Resident Evil
   // Outbreak with SOCOM II's lines): the PS2's network adapter as SOCOM II's file sets it (claude/socom2-online.md):
   // PCSX2's sockets backend on the console's own connection, its DHCP server giving the game an address, and the DNS the
@@ -3127,6 +3293,19 @@ int main()
       g_orbis_multitap == 0 ? "off" : g_orbis_multitap == 1 ? "in port 1" : "in port 2",
       who.empty() ? " PS2 port 2 stays empty" : who.c_str());
   }
+#ifdef ORBIS_PS4
+  {
+    // PS4 port (AI-assisted): the PS4 Pro in its own mode (param.sfo's Pro flag, ps4/make-pkg.sh) has twice the GPU and
+    // a 2.1 GHz CPU: 2x resolution by default there, native on the other PS4s. gs.ini and a game's file still decide.
+    // Needs proper testing on a Pro.
+    const int neo = sceKernelIsNeoMode();
+    printf("[boot] PS4%s (sceKernelIsNeoMode=%d): default resolution %s\n", neo == 1 ? " Pro, Pro mode" : "", neo,
+      neo == 1 ? "2x" : "native");
+    fflush(stdout);
+    if (neo == 1)
+      s_base_si.SetFloatValue("EmuCore/GS", "upscale_multiplier", 2.0f);
+  }
+#endif
   s_base_pre_gsini = s_base_si; // eerec-285
   orbis_apply_gs_ini(s_base_si);
 #ifdef PS5SX2_ACHIEVEMENTS
@@ -3208,7 +3387,7 @@ int main()
 #ifndef PS5SX2_ACHIEVEMENTS
   EmuConfig.Achievements.Enabled = false;
 #endif
-  GSConfig.Renderer = (g_use_gl_renderer && !g_sw_renderer) ? ORBIS_GPU_RENDERER : GSRendererType::SW;
+  GSConfig.Renderer = (g_use_gl_renderer && !g_sw_renderer) ? orbis_gpu_renderer() : GSRendererType::SW;
   GSConfig.SWExtraThreads = g_sw_renderer ? 4 : 2;
   // EE+IOP+VU recompilers (JIT memory + emitter >4GB fixes in).
   EmuConfig.Cpu.Recompiler.EnableEE = !g_ee_interp;
@@ -3219,7 +3398,7 @@ int main()
   EmuConfig.Speedhacks.IntcStat = true;
   EmuConfig.Speedhacks.vu1Instant = !g_no_speedhacks;
   EmuConfig.Speedhacks.vuFlagHack = !g_no_speedhacks;
-  EmuConfig.Speedhacks.vuThread = false;
+  EmuConfig.Speedhacks.vuThread = kOrbisMtvuDefault;
 #ifdef PS5SX2_ACHIEVEMENTS
   printf("[boot] achievements available (softcore, native notifications)\n");
 #else
@@ -3286,7 +3465,22 @@ int main()
 
   // Catch assert/abort/ud2 crashes: log PC then die.
   {
+#ifdef ORBIS_PS4
+    {
+      // PS4 port: no freopen() (see orbis_boot_log_open): the stderr.log file under stderr with dup2().
+      fflush(stderr);
+      const int fd = open(OrbisLogPath("stderr.log").c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+      if (fd >= 0)
+      {
+        dup2(fd, fileno(stderr));
+        if (fd != fileno(stderr))
+          close(fd);
+        clearerr(stderr);
+      }
+    }
+#else
     freopen(OrbisLogPath("stderr.log").c_str(), "w", stderr); // vk-285-33: logs/
+#endif
 #ifdef ORBIS_VULKAN
     // The driver writes its refusals and its queue profile to stderr. Line-buffered:
     // each finished line is one write, so an abort still keeps it. Not _IONBF (vk-285-6):
@@ -3377,7 +3571,8 @@ int main()
         title.erase(dot);
     }
     const GSRendererType renderer = EmuConfig.GS.Renderer;
-    const char* api = renderer == GSRendererType::VK ? "Vulkan" : renderer == GSRendererType::OGL ? "OpenGL" : nullptr;
+    const char* api = renderer == GSRendererType::VK ? "Vulkan" : renderer == GSRendererType::OGL ? "OpenGL" :
+                      static_cast<int>(renderer) == 18 ? "paraLLEl-GS" : nullptr;
     char how[64];
     // vk-285-110: in the PS5's language (fe_i18n.cpp).
     if (!api)
@@ -3438,7 +3633,7 @@ int main()
       pthread_detach(pad_thread);
   }
   // vk-285-72: the PS5's USB keyboard and mouse, read for the PS2's (orbis-shims/ProsperoKbdMouse.cpp).
-  if (!orbis_flag("nousbkbm"))
+  if (!orbis_no_usb_kbm())
     OrbisKbdMouseStart();
   orbis_prof_start();
   // Benchmark raw memory reads + arithmetic (isolates interpreter slowness).

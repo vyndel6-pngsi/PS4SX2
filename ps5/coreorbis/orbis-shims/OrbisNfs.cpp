@@ -31,6 +31,45 @@
 #include <unordered_map>
 #include <vector>
 
+#ifdef ORBIS_PS4
+// PS4 port (AI-assisted): the C library's file calls aren't wrapped on the PS4 (no games on NFS shares yet, and CEMUPS4's
+// runtime wraps open and close itself), so the "real" calls are the library's own and the wrappers below are left out.
+#define __real_access access
+#define __real_close close
+#define __real_closedir closedir
+#define __real_fclose fclose
+#define __real_feof feof
+#define __real_ferror ferror
+#define __real_fflush fflush
+#define __real_fgetc fgetc
+#define __real_fgets fgets
+#define __real_fileno fileno
+#define __real_flockfile flockfile
+#define __real_fopen fopen
+#define __real_fputc fputc
+#define __real_fputs fputs
+#define __real_fread fread
+#define __real_freopen freopen
+#define __real_fseek fseek
+#define __real_fseeko fseeko
+#define __real_fstat fstat
+#define __real_ftell ftell
+#define __real_ftello ftello
+#define __real_funlockfile funlockfile
+#define __real_fwrite fwrite
+#define __real_lseek lseek
+#define __real_lstat lstat
+#define __real_open open
+#define __real_opendir opendir
+#define __real_pread pread
+#define __real_read read
+#define __real_readdir readdir
+#define __real_realpath realpath
+#define __real_rewind rewind
+#define __real_setvbuf setvbuf
+#define __real_stat stat
+#define __real_vfprintf vfprintf
+#endif
 // The C library's own calls (ld.lld --wrap=<name> sends <name> here as __wrap_<name>, and __real_<name> to the library).
 extern "C" {
 FILE* __real_fopen(const char* path, const char* mode);
@@ -1100,6 +1139,8 @@ bool ReadDir(void* dir, struct dirent* out)
 #if defined(__PROSPERO__)
 	out->d_fileno = static_cast<uint32_t>(it.ino ? it.ino : d->next);
 	out->d_namlen = static_cast<uint8_t>(n);
+#elif defined(ORBIS_PS4)
+	out->d_namlen = static_cast<uint8_t>(n); // PS4 port (AI-assisted): FreeBSD's dirent; the inode isn't needed
 #else
 	out->d_ino = static_cast<ino_t>(it.ino ? it.ino : d->next);
 #endif
@@ -1126,6 +1167,7 @@ Stats GetStats()
 }
 } // namespace OrbisNfs
 
+#ifndef ORBIS_PS4 // PS4 port: see the top of the file
 // ---- the wrapped calls ----
 using namespace OrbisNfs;
 
@@ -1600,3 +1642,4 @@ int __wrap_closedir(DIR* d)
 }
 #endif
 } // extern "C"
+#endif // ORBIS_PS4

@@ -3,8 +3,11 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <map>
+#include <vector>
 
 #include "common/Assertions.h"
 
@@ -34,6 +37,158 @@ struct BASEBLOCKEX
 #endif
 };
 
+#ifdef ORBIS_PS4
+// PS4 port (AI-assisted): the compiled blocks in chunks of at most kChunk entries, sorted by startpc across the chunks,
+// with the same index-based interface as the array below. The array kept every block in one sorted array, so each new
+// block moved half of it (~20,000 blocks of 24 bytes in GTA San Andreas): 3.3% of the EE thread while driving on the
+// PS4, and far more in the bursts of thousands of compiles a second when the game reaches new code. An insert here moves
+// at most one chunk (12 KB). Lookups by index find the chunk from cached counts. Pointers into the array are as stable as
+// before (an insert may move the entries after it, as the array's memmove and reallocation did). Needs proper testing.
+class BaseBlockArray
+{
+	static constexpr s32 kChunk = 512;
+
+	struct Chunk
+	{
+		s32 count = 0;
+		BASEBLOCKEX entries[kChunk];
+	};
+
+	std::vector<Chunk*> chunks;
+	mutable std::vector<s32> first_index; // first_index[c]: the global index of chunks[c]'s first entry
+	mutable bool counts_valid = true;
+	s32 _Size = 0;
+
+	void UpdateCounts() const
+	{
+		if (counts_valid)
+			return;
+		first_index.resize(chunks.size());
+		s32 at = 0;
+		for (size_t c = 0; c < chunks.size(); c++)
+		{
+			first_index[c] = at;
+			at += chunks[c]->count;
+		}
+		counts_valid = true;
+	}
+
+	// The chunk holding global index idx (0 <= idx < _Size).
+	size_t ChunkOf(s32 idx) const
+	{
+		UpdateCounts();
+		const auto it = std::upper_bound(first_index.begin(), first_index.end(), idx);
+		return static_cast<size_t>(it - first_index.begin()) - 1;
+	}
+
+public:
+	BaseBlockArray(s32 size) { (void)size; }
+
+	~BaseBlockArray() { clear(); }
+
+	BASEBLOCKEX* insert(u32 startpc, uptr fnptr)
+	{
+		if (chunks.empty())
+			chunks.push_back(new Chunk());
+
+		// The last chunk whose first block starts at or before startpc (else the first chunk): the next chunk starts
+		// after startpc, so inserting in this one keeps the whole sequence sorted.
+		size_t c = 0;
+		{
+			size_t lo = 0, hi = chunks.size();
+			while (lo < hi)
+			{
+				const size_t mid = (lo + hi) >> 1;
+				const Chunk* k = chunks[mid];
+				if (k->count > 0 && k->entries[0].startpc <= startpc)
+				{
+					c = mid;
+					lo = mid + 1;
+				}
+				else
+					hi = mid;
+			}
+		}
+
+		if (chunks[c]->count == kChunk)
+		{
+			// Split: the upper half goes to a new chunk after this one.
+			Chunk* upper = new Chunk();
+			Chunk* lower = chunks[c];
+			const s32 half = kChunk / 2;
+			std::memcpy(upper->entries, lower->entries + half, (kChunk - half) * sizeof(BASEBLOCKEX));
+			upper->count = kChunk - half;
+			lower->count = half;
+			chunks.insert(chunks.begin() + static_cast<std::ptrdiff_t>(c) + 1, upper);
+			if (upper->entries[0].startpc <= startpc)
+				c++;
+		}
+
+		Chunk* k = chunks[c];
+		// After the blocks with the same or a lower startpc, as the array did.
+		s32 imin = 0, imax = k->count;
+		while (imin < imax)
+		{
+			const s32 imid = (imin + imax) >> 1;
+			if (k->entries[imid].startpc > startpc)
+				imax = imid;
+			else
+				imin = imid + 1;
+		}
+		if (imin < k->count)
+			std::memmove(k->entries + imin + 1, k->entries + imin, (k->count - imin) * sizeof(BASEBLOCKEX));
+		std::memset(&k->entries[imin], 0, sizeof(BASEBLOCKEX));
+		k->entries[imin].startpc = startpc;
+		k->entries[imin].fnptr = fnptr;
+		k->count++;
+		_Size++;
+		counts_valid = false;
+		return &k->entries[imin];
+	}
+
+	__fi BASEBLOCKEX& operator[](int idx) const
+	{
+		const size_t c = ChunkOf(idx);
+		return chunks[c]->entries[idx - first_index[c]];
+	}
+
+	void clear()
+	{
+		for (Chunk* k : chunks)
+			delete k;
+		chunks.clear();
+		first_index.clear();
+		counts_valid = true;
+		_Size = 0;
+	}
+
+	__fi u32 size() const { return _Size; }
+
+	// Removes the entries [first, last).
+	void erase(s32 first, s32 last)
+	{
+		s32 remaining = last - first;
+		while (remaining > 0 && first < _Size)
+		{
+			const size_t c = ChunkOf(first);
+			Chunk* k = chunks[c];
+			const s32 offset = first - first_index[c];
+			const s32 n = std::min(remaining, k->count - offset);
+			if (offset + n < k->count)
+				std::memmove(k->entries + offset, k->entries + offset + n, (k->count - offset - n) * sizeof(BASEBLOCKEX));
+			k->count -= n;
+			_Size -= n;
+			remaining -= n;
+			if (k->count == 0)
+			{
+				delete k;
+				chunks.erase(chunks.begin() + static_cast<std::ptrdiff_t>(c));
+			}
+			counts_valid = false;
+		}
+	}
+};
+#else
 class BaseBlockArray
 {
 	s32 _Reserved;
@@ -137,6 +292,7 @@ public:
 		_Size -= range;
 	}
 };
+#endif
 
 class BaseBlocks
 {

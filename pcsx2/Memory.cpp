@@ -110,6 +110,13 @@ extern "C" long long g_orbis_data_phys = -1;
 // made executable with sceKernelMprotect (vk-285-62's memory probe ran code from it on FW 4.03),
 // instead of JIT shared memory, which comes out of the 448 MiB flexible budget.
 extern "C" int g_orbis_code_direct = 0;
+// The direct memory's type: the PS5's 12; on the PS4 (AI-assisted) WB_ONION (0), CPU-cached, the one CPU-side data
+// wants (the PS4 has 0 WB_ONION, 3 WC_GARLIC, 10 WB_GARLIC; 12 was refused with 0x80020016). Needs proper testing.
+#ifdef ORBIS_PS4
+#define ORBIS_DMEM_TYPE 0
+#else
+#define ORBIS_DMEM_TYPE 12
+#endif
 extern "C" int sceKernelMprotect(const void* addr, unsigned long long len, int prot);
 extern "C" int sceKernelMunmap(void* addr, unsigned long long len);
 
@@ -134,7 +141,7 @@ bool SysMemory::AllocateMemoryMap()
 		fflush(stdout);
 		// Keep direct emulation memory outside the PS5 flexible-memory heap.
 		u8* data = (u8*)0x600000000ULL;
-		int rc = sceKernelAllocateDirectMemory(0, total, main_size, align, 12, &phys);
+		int rc = sceKernelAllocateDirectMemory(0, total, main_size, align, ORBIS_DMEM_TYPE, &phys);
 		printf("[dbg] memmap: alloc direct rc=%d phys=%lld\n", rc, phys);
 		fflush(stdout);
 		int rc2 = -1;
@@ -156,7 +163,7 @@ bool SysMemory::AllocateMemoryMap()
 				const unsigned long long code_bytes = (code_size + big - 1) & ~(big - 1);
 				long long code_phys = -1;
 				u8* want = (u8*)0x900000000ULL;
-				const int ra = sceKernelAllocateDirectMemory(0, total, code_bytes, big, 12, &code_phys);
+				const int ra = sceKernelAllocateDirectMemory(0, total, code_bytes, big, ORBIS_DMEM_TYPE, &code_phys);
 				const int rm = ra == 0 ? sceKernelMapDirectMemory((void**)&want, code_bytes, 0x03, 0, code_phys, big) : -1;
 				const int rp = rm == 0 ? sceKernelMprotect(want, code_bytes, 0x07) : -1;
 				printf("[dbg] memmap: code direct %llu MiB: alloc rc=%d phys=%lld map rc=0x%x addr=%p mprotect rc=0x%x\n",
@@ -189,7 +196,7 @@ bool SysMemory::AllocateMemoryMap()
 			{
 				long long phys2 = -1;
 				code = (u8*)0x680000000ULL;
-				rcc = sceKernelAllocateDirectMemory(0, total, code_size, align, 12, &phys2);
+				rcc = sceKernelAllocateDirectMemory(0, total, code_size, align, ORBIS_DMEM_TYPE, &phys2);
 				printf("[dbg] memmap: alloc code direct rc=%d phys=%lld\n", rcc, phys2);
 				fflush(stdout);
 				rcc2 = -1;

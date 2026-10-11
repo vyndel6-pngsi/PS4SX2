@@ -5,6 +5,10 @@
 
 #include "fe_options.h"
 #include "fe_text.h" // vk-285-116: the buttons' symbols (icon::)
+#include "fe_bios.h" // PS4 port: kBiosMinSize, kBiosMaxSize
+
+#include <dirent.h>
+#include <sys/stat.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -279,6 +283,33 @@ const char* kSlotFile[3] = {"", "MemoryCards/Slot1_Filename", "MemoryCards/Slot2
 const char* kSlotOn[3] = {"", "MemoryCards/Slot1_Enable", "MemoryCards/Slot2_Enable"};
 const char* kSlotDefault[3] = {"", "Mcd001.ps2", "Mcd002.ps2"};
 
+// PS4 port (AI-assisted): the BIOS row. PCSX2's own key: a file name in the BIOS folder; unset, PCSX2 takes the first BIOS it
+// finds (BiosTools.cpp).
+const char kBiosKey[] = "Filenames/BIOS";
+
+// The files in `dir` of a PS2 BIOS's size (4 to 8 MB: a BIOS's .NVM, .MEC, ROM1 and other parts are smaller), by name.
+std::vector<std::string> ListBioses(const std::string& dir)
+{
+	std::vector<std::string> out;
+	DIR* d = dir.empty() ? nullptr : opendir(dir.c_str());
+	if (!d)
+		return out;
+	while (dirent* e = readdir(d))
+	{
+		const std::string name = e->d_name;
+		if (name.empty() || name[0] == '.' || !SafeValue(name))
+			continue;
+		struct stat st = {};
+		if (stat((dir + "/" + name).c_str(), &st) != 0 || !S_ISREG(st.st_mode) ||
+			static_cast<uint64_t>(st.st_size) < fe::kBiosMinSize || static_cast<uint64_t>(st.st_size) > fe::kBiosMaxSize)
+			continue;
+		out.push_back(name);
+	}
+	closedir(d);
+	std::sort(out.begin(), out.end(), [](const std::string& a, const std::string& b) { return Lower(a) < Lower(b); });
+	return out;
+}
+
 std::string CardSize(uint64_t bytes)
 {
 	if (bytes == kPs1CardBytes)
@@ -546,6 +577,7 @@ void OptionsSheet::Reload()
 	m_patches = m_global ? std::vector<PatchGroup>() : PatchGroups(m_paths.patches_dir, m_serial);
 	m_cheats = (m_global || m_paths.cheats_dir.empty()) ? std::vector<PatchGroup>() : PatchGroups(m_paths.cheats_dir, m_serial); // 2026-10-08
 	m_cards = ListCards(m_paths.memcards_dir);
+	m_bioses = ListBioses(m_paths.bios_dir); // PS4 port
 	BuildRows();
 }
 
@@ -605,6 +637,12 @@ void OptionsSheet::BuildRows()
 		// 2026-10-05 (AI-assisted): the game's HD texture pack, under Texture replacements.
 		if (g.title == "Graphics" && m_texture_pack_row && !m_global && !m_serial.empty())
 			add(Kind::TexturePack, "HD texture pack");
+	}
+	// PS4 port (AI-assisted): which BIOS, for all games or for this one (a USA game with an NTSC BIOS, say).
+	if (settings && !m_paths.bios_dir.empty())
+	{
+		add(Kind::Header, "PS2 BIOS");
+		add(Kind::Bios, "BIOS");
 	}
 	if (settings && !m_paths.memcards_dir.empty())
 	{
@@ -697,6 +735,11 @@ std::string OptionsSheet::Value(const Row& r) const
 		}
 		case Kind::NewCard:
 			return std::to_string(m_new_card_mb) + " MB";
+		case Kind::Bios: // PS4 port
+		{
+			const Effective e = Get(kBiosKey, "");
+			return e.value.empty() ? std::string("Automatic") : e.value;
+		}
 		case Kind::Patch:
 		{
 			const bool on = std::find(m_own.enabled.begin(), m_own.enabled.end(), r.label) != m_own.enabled.end();
@@ -770,6 +813,8 @@ OptionsSheet::From OptionsSheet::Source(const Row& r) const
 		}
 		case Kind::Patch:
 			return std::find(m_own.enabled.begin(), m_own.enabled.end(), r.label) != m_own.enabled.end() ? From::Own : From::Default;
+		case Kind::Bios: // PS4 port
+			return Get(kBiosKey, "").from;
 		case Kind::Cheat:
 			return CheatOn(r.label) ? From::Own : From::Default;
 		case Kind::Recommended:
@@ -865,6 +910,10 @@ std::string OptionsSheet::Help(const Row& r) const
 			       (Source(r) == From::Own ? std::string("Set for ") + (m_global ? "all games." : "this game.") : "Follows " + follows + ".") +
 			       " Cards are the files in memcards/.";
 		}
+		case Kind::Bios: // PS4 port (AI-assisted)
+			return "The PS2 BIOS the game starts with: the BIOS images in " + m_paths.bios_dir + " (" +
+			       std::to_string(m_bioses.size()) + " found). Automatic takes the first one PCSX2 finds. Used when a game starts. " +
+			       (Source(r) == From::Own ? std::string("Set for ") + (m_global ? "all games." : "this game.") : "Follows " + follows + ".");
 		case Kind::NewCard:
 			return "A blank card, named Card 1, Card 2 and so on. The game, or the PS2 browser, formats it the first time. Most games are "
 			       "happiest with 8 MB; bigger cards run out much later. Pick it in a slot afterwards.";
@@ -1011,6 +1060,21 @@ bool OptionsSheet::Step(const Row& r, int dir)
 				ch.push_back({Change::Set, on, "true"});
 			return Save(ch);
 		}
+		case Kind::Bios: // PS4 port (AI-assisted): "" (automatic, or what it follows), then the BIOS images
+		{
+			std::vector<std::string> list = {""};
+			list.insert(list.end(), m_bioses.begin(), m_bioses.end());
+			const Effective e = Get(kBiosKey, "");
+			const std::string cur = e.from == From::Own ? e.value : std::string();
+			if (std::find(list.begin(), list.end(), cur) == list.end())
+				list.push_back(cur);
+			const int n = static_cast<int>(list.size());
+			const int at = static_cast<int>(std::find(list.begin(), list.end(), cur) - list.begin());
+			const std::string& v = list[static_cast<size_t>(((at + dir) % n + n) % n)];
+			if (v.empty())
+				return Save({{Change::Unset, kBiosKey, {}}});
+			return Save({{Change::Set, kBiosKey, v}});
+		}
 		case Kind::NewCard:
 		{
 			static const int sizes[] = {8, 16, 32, 64};
@@ -1130,6 +1194,10 @@ bool OptionsSheet::Reset(const Row& r)
 				return false;
 			return Save({{Change::Unset, kSlotFile[r.slot], {}}, {Change::Unset, kSlotOn[r.slot], {}}});
 		}
+		case Kind::Bios: // PS4 port
+			if (Get(kBiosKey, "").from != From::Own)
+				return false;
+			return Save({{Change::Unset, kBiosKey, {}}});
 		case Kind::Patch:
 			if (std::find(m_own.enabled.begin(), m_own.enabled.end(), r.label) == m_own.enabled.end())
 				return false;

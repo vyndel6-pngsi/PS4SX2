@@ -170,7 +170,16 @@ void SampleHandler(int, siginfo_t*, void* ctx)
 		return;
 	}
 	s_samples[i] = rip;
+#ifdef ORBIS_PS4
+	// PS4 port (AI-assisted): memcpy and memmove are the eboot's own here (CEMUPS4's port/ps4_string.c), not a system
+	// library's, and were 4.7% of the EE thread in GTA San Andreas with no caller known: their samples keep the stack
+	// too. 0x400 bytes covers each routine (both are about 0x100). Needs proper testing.
+	const uint64_t copy_lo = reinterpret_cast<uint64_t>(&memcpy), move_lo = reinterpret_cast<uint64_t>(&memmove);
+	const bool in_copy = (rip >= copy_lo && rip < copy_lo + 0x400) || (rip >= move_lo && rip < move_lo + 0x400);
+	if ((rip >= kLibLo && rip < kLibHi) || in_copy)
+#else
 	if (rip >= kLibLo && rip < kLibHi)
+#endif
 	{
 		const uint32_t j = s_lib_count.load(std::memory_order_relaxed);
 		if (j < kMaxLibSamples)
@@ -831,7 +840,13 @@ void OrbisAutoProfNoteThread(int which)
 void OrbisAutoProfSecond(float speed, float ee, float gs, float vu)
 {
 	OrbisAutoProfNoteThread(1);
+#ifdef ORBIS_PS4
+	// PS4 port (AI-assisted): off unless the flag file autoprof is there. On the PS4 a slow stretch is the normal state
+	// (GTA San Andreas runs at 40-50%), so it sampled the busy thread again and again at a cost to that thread.
+	static const bool off = !OrbisFlag("autoprof");
+#else
 	static const bool off = OrbisFlag("noautoprof");
+#endif
 	static int slow = 0, windows = 0;
 	static timespec last = {0, 0};
 	if (off || s_started.load(std::memory_order_relaxed) || windows >= kAutoWindows)

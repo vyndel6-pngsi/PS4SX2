@@ -47,7 +47,7 @@ void NetRxThread()
 	}
 }
 
-#ifdef __PROSPERO__
+#if defined(__PROSPERO__) || defined(ORBIS_PS4) // PS4 port (AI-assisted): the same console behaviour
 // PS5 port (2026-10-05, AI-assisted): the network adapter is on for every game (main-boot.cpp), so the receive thread,
 // which wakes every millisecond at the highest priority, starts only when the game first sends a packet. Until then there
 // is nothing to receive: the sockets adapter only answers what the PS2 sent (its DHCP and DNS servers too). Games that
@@ -58,7 +58,7 @@ static void StartNetRxThread();
 
 void tx_put(NetPacket* pkt)
 {
-#ifdef __PROSPERO__
+#if defined(__PROSPERO__) || defined(ORBIS_PS4) // PS4 port (AI-assisted): the same console behaviour
 	if (!rx_started && RxRunning && nif != nullptr)
 		StartNetRxThread();
 #endif
@@ -117,7 +117,7 @@ void InitNet()
 	nif = na;
 	RxRunning = true;
 
-#ifdef __PROSPERO__
+#if defined(__PROSPERO__) || defined(ORBIS_PS4) // PS4 port (AI-assisted): the same console behaviour
 	rx_started = false; // tx_put starts the thread with the game's first packet
 }
 
@@ -172,7 +172,7 @@ void TermNet()
 	{
 		RxRunning = false;
 		nif->close();
-#ifdef __PROSPERO__
+#if defined(__PROSPERO__) || defined(ORBIS_PS4) // PS4 port (AI-assisted): the same console behaviour
 		// The game may never have sent anything: then there is no thread to wait for.
 		if (rx_thread.joinable())
 		{

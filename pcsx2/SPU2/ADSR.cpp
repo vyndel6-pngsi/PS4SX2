@@ -116,10 +116,8 @@ void V_VolumeSlide::RegSet(u16 src)
 	}
 }
 
-void V_VolumeSlide::Update()
+void V_VolumeSlide::UpdateSlide() // Update() checks Enable first (defs.h)
 {
-	if (!Enable)
-		return;
 
 	s32 step_size = 7 - Step;
 

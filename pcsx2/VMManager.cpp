@@ -3291,7 +3291,7 @@ void VMManager::WarnAboutUnsafeSettings()
 
 	if (EmuConfig.Speedhacks.fastCDVD)
 		append(ICON_FA_COMPACT_DISC, TRANSLATE_SV("VMManager", "Fast CDVD is enabled, this may break games."));
-#ifdef __PROSPERO__
+#if defined(__PROSPERO__) || defined(ORBIS_PS4) // PS4 port (AI-assisted): the same console behaviour
 	// PS5SX2 (vk-285-113): the settings page's recommended EE clock is 130% (EECycleRate 1). The log said
 	// "may crash or make games run too slow" in every session that used it, and testers read it as a fault.
 	const bool port_cycle_rate_default = (EmuConfig.Speedhacks.EECycleRate == 1 && EmuConfig.Speedhacks.EECycleSkip == 0);

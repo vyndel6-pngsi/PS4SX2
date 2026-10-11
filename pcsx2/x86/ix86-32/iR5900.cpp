@@ -572,7 +572,14 @@ static const void* _DynGen_EnterRecompiledCode()
 
 	u8* retval = xGetAlignedCallTarget();
 
+#ifndef ORBIS_PS4
 	xFastCall((const void*)orbis_probe_rsp);
+#else
+	// PS4 port (AI-assisted): no probe here. It is called before the stack is aligned (the xSUB below), so it runs
+	// with rsp 8 off, and OpenOrbis' printf (musl) faults on its first aligned SSE store to the stack (SIGBUS in
+	// vfprintf, v00.07). Needs proper testing.
+	(void)orbis_probe_rsp;
+#endif
 
 #ifdef ENABLE_VTUNE
 	xScopedStackFrame frame(true, true);

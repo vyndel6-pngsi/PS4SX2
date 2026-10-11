@@ -46,7 +46,8 @@ VKSwapChain::~VKSwapChain()
 // as mihawk-99's vkQuake and RetroArch ports do. The driver reports one 3840x2160
 // mode and refuses a surface of any other extent, so the swapchain is that size and
 // the present pass scales the frame into it.
-static VkSurfaceKHR CreateOrbisDisplaySurface(VkInstance instance, VkPhysicalDevice physical_device)
+// PS4 port (AI-assisted): not static, paraLLEl-GS (GSRendererPGS.cpp) makes its surface with it too.
+VkSurfaceKHR CreateOrbisDisplaySurface(VkInstance instance, VkPhysicalDevice physical_device)
 {
 	if (!vkGetPhysicalDeviceDisplayPropertiesKHR || !vkGetPhysicalDeviceDisplayPlanePropertiesKHR ||
 		!vkGetDisplayModePropertiesKHR || !vkCreateDisplayPlaneSurfaceKHR)

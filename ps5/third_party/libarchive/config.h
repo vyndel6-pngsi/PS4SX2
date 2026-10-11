@@ -4,6 +4,8 @@
  * config_linux.h is the same build on Linux (Ubuntu 24.04, zlib), for the PC preview and its tests. */
 #if defined(__PROSPERO__)
 #include "config_ps5.h"
+#elif defined(__PS4__)
+#include "config_ps4.h" /* PS4 port (AI-assisted) */
 #else
 #include "config_linux.h"
 #endif

@@ -63,6 +63,7 @@ struct OptionsPaths
 	std::string patches_dir;  // <serial>_<crc>.pnach
 	std::string cheats_dir;   // 2026-10-08: <serial>_<crc>.pnach of cheats ("" for none: no cheat rows)
 	std::string memcards_dir; // memcards/ ("" for none: no card rows)
+	std::string bios_dir;     // PS4 port (AI-assisted): bios/, the BIOS row's list ("" for none: no BIOS row)
 	std::string presets;      // assets/presets.ini's text (the Recommended row)
 	// Where each change goes: the settings log (fe_ps5.cpp: AppendSettingsLog). May be empty.
 	std::function<void(const std::string&)> log;
@@ -104,6 +105,7 @@ public:
 		BiosFolder,  // vk-285-135: where the BIOS is looked for first (the folder picker)
 		NfsShares,   // vk-285-135: NFS shares' addresses (the app's list, the PS5's keyboard)
 		CheatDisc,   // vk-285-139: the sheet for all games: the cheat disc (kCheatDiscKey, one of the shelf's images)
+		Bios,        // PS4 port (AI-assisted): which BIOS file a game starts with (PCSX2's Filenames/BIOS)
 	};
 
 	enum class From
@@ -209,6 +211,7 @@ private:
 	std::vector<settings::PatchGroup> m_cheats; // 2026-10-08: the cheats folder's groups for this game
 	std::vector<std::pair<std::string, std::string>> m_game_fixes; // 2026-10-08: settings::ManualFixSettings for the game
 	std::vector<settings::CardFile> m_cards;
+	std::vector<std::string> m_bioses; // PS4 port: the BIOS images in m_paths.bios_dir
 	bool m_has_preset = false;
 	std::string m_preset;
 	std::vector<Row> m_rows;

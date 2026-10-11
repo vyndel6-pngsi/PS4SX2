@@ -255,7 +255,7 @@ static void LoadIrx(const std::string& filename, u8* dest, size_t maxSize)
 	return;
 }
 
-#ifdef __PROSPERO__
+#if defined(__PROSPERO__) || defined(ORBIS_PS4) // PS4 port (AI-assisted): the same console behaviour
 // PS5 port (vk-285-115, AI-assisted): where else a BIOS may be, and what was there when none is found. 1.50's logs:
 // 689 starts on 146 consoles failed with "PCSX2 requires a PlayStation 2 BIOS" (26 consoles never got past it); in
 // 494 of the 591 reports the BIOS folder had no file at all, and the log didn't say what it held. The BIOS folder is
@@ -416,7 +416,7 @@ static std::string FindBiosImage()
 
 	FileSystem::FindResultsArray results;
 	if (!FileSystem::FindFiles(EmuFolders::Bios.c_str(), "*", FILESYSTEM_FIND_FILES, &results))
-#ifdef __PROSPERO__
+#if defined(__PROSPERO__) || defined(ORBIS_PS4) // PS4 port (AI-assisted): the same console behaviour
 		results.clear(); // vk-285-115: nothing there; look elsewhere below
 #else
 		return std::string();
@@ -436,7 +436,7 @@ static std::string FindBiosImage()
 		}
 	}
 
-#ifdef __PROSPERO__
+#if defined(__PROSPERO__) || defined(ORBIS_PS4) // PS4 port (AI-assisted): the same console behaviour
 	// vk-285-115: the other places, then what the BIOS folder holds (see OrbisFindBiosElsewhere).
 	{
 		std::string seen;

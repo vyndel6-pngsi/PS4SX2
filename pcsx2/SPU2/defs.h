@@ -134,7 +134,15 @@ public:
 	{
 	}
 
-	void Update();
+	// PS4 port (AI-assisted): the "not sliding" case inline. Update() runs for both sides of every voice and of the
+	// cores' volumes at each 48 kHz output sample (~4.6 million calls a second), and nearly all of them return at once:
+	// 1.4% of the EE thread in GTA San Andreas's profile on the PS4 was the calls themselves. Needs proper testing.
+	__forceinline void Update()
+	{
+		if (Enable)
+			UpdateSlide();
+	}
+	void UpdateSlide();
 	void RegSet(u16 src); // used to set the volume from a register source
 
 #ifdef PCSX2_DEVBUILD

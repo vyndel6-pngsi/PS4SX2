@@ -16,6 +16,8 @@
 
 extern "C" {
 
+#ifndef HAVE_PARALLEL_GS
+// Crude hack, but this conflicts with volk.
 #define VULKAN_MODULE_ENTRY_POINT(name, required) PFN_##name name;
 #define VULKAN_INSTANCE_ENTRY_POINT(name, required) PFN_##name name;
 #define VULKAN_DEVICE_ENTRY_POINT(name, required) PFN_##name name;
@@ -23,6 +25,7 @@ extern "C" {
 #undef VULKAN_DEVICE_ENTRY_POINT
 #undef VULKAN_INSTANCE_ENTRY_POINT
 #undef VULKAN_MODULE_ENTRY_POINT
+#endif
 }
 
 void Vulkan::ResetVulkanLibraryFunctionPointers()
@@ -87,7 +90,10 @@ bool Vulkan::LoadVulkanLibrary(Error* error)
 
 void Vulkan::UnloadVulkanLibrary()
 {
+#ifndef HAVE_PARALLEL_GS
+	// FIXME: parallel-gs share volk global pointers.
 	ResetVulkanLibraryFunctionPointers();
+#endif
 	s_vulkan_library_loaded = false;
 }
 #else
@@ -134,7 +140,10 @@ bool Vulkan::LoadVulkanLibrary(Error* error)
 
 	if (required_functions_missing)
 	{
+#ifndef HAVE_PARALLEL_GS
+		// FIXME: parallel-gs share volk global pointers.
 		ResetVulkanLibraryFunctionPointers();
+#endif
 		s_vulkan_library.Close();
 		return false;
 	}
@@ -144,7 +153,10 @@ bool Vulkan::LoadVulkanLibrary(Error* error)
 
 void Vulkan::UnloadVulkanLibrary()
 {
+#ifndef HAVE_PARALLEL_GS
+	// FIXME: parallel-gs share volk global pointers.
 	ResetVulkanLibraryFunctionPointers();
+#endif
 	s_vulkan_library.Close();
 }
 #endif
