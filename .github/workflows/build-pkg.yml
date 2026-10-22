@@ -14,7 +14,7 @@ jobs:
       - name: Install Compilers and Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build lld text-template-perl
+          sudo apt-get install -y clang cmake ninja-build lld libtext-template-perl build-essential
 
       - name: Setup OpenOrbis PS4 toolchain SDK
         run: |
@@ -48,4 +48,3 @@ jobs:
         with:
           name: iHaiDeeZ-PS4SX2-PKG
           path: build/*.pkg
-
