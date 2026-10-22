@@ -1,0 +1,55 @@
+name: Build iHaiDeeZ PS4 Package
+on: 
+  workflow_dispatch: # Allows you to manually click "Run Workflow" from GitHub
+
+jobs:
+  build-pkg:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Code Base
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive' # Vital because PS4SX2 relies heavily on submodules
+
+      - name: Install Compilers and Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build lld Text-Template-perl
+
+      - name: Setup OpenOrbis PS4 toolchain SDK
+        run: |
+          wget https://github.com
+          tar -xzf OpenOrbis_PS4_Toolchain_v0.5.2.tar.gz
+          echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/OpenOrbis" >> $GITHUB_ENV
+          
+      - name: Execute Shell Script Dependencies
+        run: |
+          chmod +x .github/workflows/scripts/linux/build-dependencies-qt.sh
+          ./.github/workflows/scripts/linux/build-dependencies-qt.sh deps
+        env:
+          CC: clang
+          CXX: clang++
+
+      - name: Configure CMake and Compile Binaries
+        run: |
+          cmake -B build \
+            -DCMAKE_TOOLCHAIN_FILE=$OO_PS4_TOOLCHAIN/OpenOrbisToolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -GNinja
+          ninja -C build
+
+      - name: Package to Installable PKG
+        run: |
+          # Creates the final retail .pkg payload file 
+          cd build
+          $OO_PS4_TOOLCHAIN/bin/orbis-pub-gen create-pkg --gp4 ps4sx2.gp4 --output ./
+
+      - name: Upload Final Artifact to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: iHaiDeeZ-PS4SX2-PKG
+          path: build/*.pkg
+
+        with:
+          name: iHaiDeeZ-PS4SX2-PKG
+          path: build/*.pkg
