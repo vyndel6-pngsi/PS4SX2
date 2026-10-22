@@ -1,6 +1,6 @@
 name: Build iHaiDeeZ PS4 Package
-on: 
-  workflow_dispatch: # Allows you to manually click "Run Workflow" from GitHub
+on:
+  workflow_dispatch:
 
 jobs:
   build-pkg:
@@ -9,12 +9,12 @@ jobs:
       - name: Checkout Code Base
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive' # Vital because PS4SX2 relies heavily on submodules
+          submodules: 'recursive'
 
       - name: Install Compilers and Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build lld Text-Template-perl
+          sudo apt-get install -y clang cmake ninja-build lld text-template-perl
 
       - name: Setup OpenOrbis PS4 toolchain SDK
         run: |
@@ -40,7 +40,6 @@ jobs:
 
       - name: Package to Installable PKG
         run: |
-          # Creates the final retail .pkg payload file 
           cd build
           $OO_PS4_TOOLCHAIN/bin/orbis-pub-gen create-pkg --gp4 ps4sx2.gp4 --output ./
 
@@ -50,6 +49,3 @@ jobs:
           name: iHaiDeeZ-PS4SX2-PKG
           path: build/*.pkg
 
-        with:
-          name: iHaiDeeZ-PS4SX2-PKG
-          path: build/*.pkg
